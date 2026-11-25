@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Déploie des scripts SQL Snowflake (blocs anonymes DECLARE/BEGIN/END) sur
 l'environnement cible, en forçant la variable vEnv du script, ainsi que le
-préfixe d'environnement de tout warehouse référencé en dur (tables
+préfixe NP_ (non-prod) de tout warehouse référencé en dur (tables
 dynamiques, tasks...), pour éviter toute erreur humaine (oubli de repasser
 le script en PRD avant merge, warehouse resté sur le mauvais environnement,
 etc.).
@@ -13,9 +13,9 @@ Modèle de promotion par branches (dev → qual → prod) :
     validation manuelle), puis dans prod (ce script, TARGET_ENV=PRD, avec
     validation manuelle via l'Environment GitHub 'prod').
   - Ce script ne déploie donc jamais sur DEV lui-même (ALLOWED_ENVS ne
-    contient que QUA et PRD), mais reconnaît DEV comme préfixe valide dans
-    les fichiers (un script committé depuis la branche dev porte souvent
-    encore vEnv='DEV' / WAREHOUSE = DEV_xxx, à réécrire au passage).
+    contient que QUA et PRD), mais reconnaît DEV comme valeur valide pour
+    vEnv (un script committé depuis la branche dev porte souvent encore
+    vEnv='DEV', à réécrire au passage).
 
 Chaque fichier .sql est envoyé tel quel en UNE seule instruction : les scripts
 du client sont des blocs anonymes (DECLARE ... BEGIN ... END;) qui doivent
@@ -65,11 +65,6 @@ import snowflake.connector
 # Environnements sur lesquels ce script est autorisé à déployer. DEV n'y
 # figure pas : la promotion vers dev ne passe pas par la pipeline.
 ALLOWED_ENVS = {"QUA", "PRD"}
-
-# Tous les préfixes d'environnement reconnus dans un fichier .sql, y compris
-# DEV (un script venant de la branche dev porte souvent encore ce préfixe
-# avant d'être promu vers qual/prod).
-RECOGNIZED_ENV_PREFIXES = {"DEV", "QUA", "PRD"}
 
 ENVIRONMENT_NAME = {"QUA": "qual", "PRD": "prod"}
 
@@ -196,23 +191,33 @@ def force_target_env(sql: str, target_env: str) -> str:
     return new_sql
 
 
-# WAREHOUSE = <ENV>_<nom>, utilisé par ex. par les tables dynamiques
-# (WAREHOUSE = ...) et les tasks (WAREHOUSE = ...). Ces clauses attendent un
-# identifiant littéral : on ne peut pas y mettre une variable de session
-# (:vWarehouse), contrairement à la base (IDENTIFIER(:vEnv)). On réécrit donc
-# directement le préfixe d'environnement, comme pour vEnv, quel que soit
-# celui laissé dans le fichier par le développeur (y compris DEV_xxx, promu
-# vers QUA/PRD).
-WAREHOUSE_PATTERN = re.compile(
-    r"(\bWAREHOUSE\s*=\s*)(" + "|".join(RECOGNIZED_ENV_PREFIXES) + r")(_[A-Za-z0-9_]*)",
-    re.IGNORECASE,
-)
+# WAREHOUSE = ..., utilisé par ex. par les tables dynamiques et les tasks.
+# Cette clause attend un identifiant littéral : on ne peut pas y mettre une
+# variable de session (:vWarehouse), contrairement à la base
+# (IDENTIFIER(:vEnv)). Convention des warehouses : un seul nom par usage
+# (ex. COMPUTE_WH), décliné en deux variantes --
+#   - NP_<nom>  : warehouse non-prod, partagé par DEV et QUA
+#   - <nom>     : warehouse prod, sans préfixe
+# On réécrit donc le préfixe NP_ (ajouté ou retiré selon la cible), quel que
+# soit l'état laissé dans le fichier par le développeur.
+NON_PROD_PREFIX = "NP_"
+
+WAREHOUSE_PATTERN = re.compile(r"(\bWAREHOUSE\s*=\s*)([A-Za-z0-9_:]+)", re.IGNORECASE)
 
 
 def force_target_warehouse_env(sql: str, target_env: str) -> str:
-    """Réécrit le préfixe d'environnement de chaque warehouse référencé
-    dans une clause WAREHOUSE = ..., en préservant le reste du nom."""
-    return WAREHOUSE_PATTERN.sub(rf"\1{target_env}\3", sql)
+    """Ajoute ou retire le préfixe NP_ de chaque warehouse référencé dans
+    une clause WAREHOUSE = ..., selon que la cible est prod ou non."""
+
+    def repl(match: re.Match) -> str:
+        clause, name = match.group(1), match.group(2)
+        if name.startswith(":"):
+            return match.group(0)  # variable de session, rien à réécrire
+        bare = name[len(NON_PROD_PREFIX):] if name.upper().startswith(NON_PROD_PREFIX) else name
+        new_name = bare if target_env == "PRD" else f"{NON_PROD_PREFIX}{bare}"
+        return f"{clause}{new_name}"
+
+    return WAREHOUSE_PATTERN.sub(repl, sql)
 
 
 def connect() -> snowflake.connector.SnowflakeConnection:

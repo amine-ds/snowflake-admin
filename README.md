@@ -97,8 +97,6 @@ Bloque la PR si un fichier `.sql` modifié contient :
   dans la déclaration de la variable `vEnv` — une seule base par
   environnement, les zones (`BRZ`/`SLV`/`GLD`) sont des schémas à
   l'intérieur, pas des bases séparées
-- un warehouse (`WAREHOUSE = ...`) dont le nom n'est pas préfixé par un
-  code d'environnement reconnu (`DEV_.../QUA_.../PRD_...`) — voir section 5
 - pas d'en-tête de commentaire (Auteur / Date / Description)
 - un mot de passe ou une clé privée écrits en clair dans le script
 
@@ -115,12 +113,17 @@ valeur** en fonction du job qui l'exécute (`QUA` pour le job qual, `PRD`
 pour le job prod), quelle que soit la valeur présente dans le fichier —
 DEV compris.
 
-**Même principe pour les warehouses.** Les tables dynamiques et les tasks
-référencent leur warehouse en dur (`WAREHOUSE = DEV_TRF_TRAFIC_WH` par
-exemple) : cette clause n'accepte pas une variable de session en DDL, donc
-le nom reste toujours écrit en clair. Le déploiement repère chaque préfixe
-d'environnement reconnu (`DEV_`/`QUA_`/`PRD_`) dans une clause
-`WAREHOUSE = ...` et le réécrit pour correspondre au job en cours.
+**Même principe pour les warehouses, avec une convention différente.** Les
+tables dynamiques et les tasks référencent leur warehouse en dur
+(`WAREHOUSE = ...`) : cette clause n'accepte pas une variable de session en
+DDL, donc le nom reste toujours écrit en clair. Convention : un warehouse
+non-prod est préfixé `NP_` (ex. `NP_COMPUTE_WH`, partagé par DEV et QUA), le
+même warehouse en prod n'a **pas** de préfixe (`COMPUTE_WH`). Le
+déploiement ajoute ou retire ce préfixe `NP_` selon la cible — `QUA` ⇒
+toujours `NP_<nom>`, `PRD` ⇒ toujours `<nom>` sans préfixe — quel que soit
+l'état laissé dans le fichier par le développeur (le lint ne contraint
+donc rien sur le nom du warehouse : n'importe quel nom, préfixé ou non, est
+accepté, puisque le déploiement sait gérer les deux cas).
 
 Chaque fichier `.sql` modifié par la PR est envoyé à Snowflake en une seule
 requête (`cur.execute`), car les scripts sont des blocs anonymes

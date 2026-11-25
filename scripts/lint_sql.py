@@ -8,10 +8,6 @@ Vérifie les bonnes pratiques attendues par l'équipe Manitowoc :
     dur (DEV/QUA/PRD utilisé tel quel ailleurs que dans la déclaration de
     vEnv) ; les zones (BRZ/SLV/GLD) sont des schémas à l'intérieur de cette
     base, pas des bases séparées
-  - les warehouses (WAREHOUSE = ...), qui ne peuvent pas être pilotés par
-    variable en DDL, doivent au moins être préfixés par un code
-    d'environnement reconnu (DEV_.../QUA_.../PRD_...) pour que le
-    déploiement puisse le remplacer automatiquement par le bon environnement
   - présence d'un bloc DECLARE ... vEnv ... pour piloter l'environnement
   - présence d'un en-tête de commentaire (Auteur / Date / Description)
   - pas de mot de passe ou de clé en clair dans le script
@@ -66,11 +62,10 @@ def write_step_summary(markdown: str) -> None:
 
 VALID_ZONES = {"brz", "slv", "gld"}
 
-# Tous les préfixes d'environnement reconnus dans un fichier .sql. Doit
-# rester aligné avec RECOGNIZED_ENV_PREFIXES dans deploy_snowflake.py (ce
-# lint est volontairement permissif : il valide la FORME du préfixe, pas
-# que l'environnement cible soit le bon pour la branche — c'est le rôle du
-# déploiement de forcer la bonne valeur).
+# Codes d'environnement valides pour vEnv / la base (une seule base par
+# environnement : voir check_hardcoded_db). Indépendant de la convention de
+# nommage des warehouses (préfixe NP_, voir deploy_snowflake.py), qui ne
+# dépend pas de ces codes.
 ALLOWED_ENVS = {"DEV", "QUA", "PRD"}
 
 WAREHOUSE_PATTERN = re.compile(r"\bWAREHOUSE\s*=\s*([A-Za-z0-9_:]+)", re.IGNORECASE)
@@ -162,30 +157,6 @@ def check_hardcoded_db(sql_no_comments: str, path: str) -> list[Violation]:
     return violations
 
 
-def check_warehouse_env_prefix(sql_no_comments: str, path: str) -> list[Violation]:
-    """Un warehouse référencé en dur (WAREHOUSE = ...) doit être préfixé par
-    un code d'environnement reconnu pour que le déploiement puisse le
-    remplacer automatiquement (voir force_target_warehouse_env)."""
-    violations = []
-    envs = "|".join(ALLOWED_ENVS)
-    valid_prefix = re.compile(rf"^(?:{envs})_", re.IGNORECASE)
-    for i, line in enumerate(sql_no_comments.splitlines(), start=1):
-        for m in WAREHOUSE_PATTERN.finditer(line):
-            token = m.group(1)
-            if token.startswith(":"):
-                continue  # variable de session, rien à vérifier
-            if not valid_prefix.match(token):
-                violations.append(
-                    Violation(
-                        path, i, "warehouse-missing-env-prefix",
-                        f"Warehouse '{token}' sans préfixe d'environnement reconnu "
-                        f"({'/'.join(sorted(ALLOWED_ENVS))}_...) : le déploiement ne "
-                        "pourra pas le faire pointer vers le bon environnement.",
-                    )
-                )
-    return violations
-
-
 def check_header_comment(raw: str, path: str) -> list[Violation]:
     violations = []
     head = raw[:1500]
@@ -263,7 +234,6 @@ def lint_file(path: str) -> list[Violation]:
     violations += check_select_star(raw, path)
     violations += check_env_variable(clean, path)
     violations += check_hardcoded_db(clean, path)
-    violations += check_warehouse_env_prefix(clean, path)
     violations += check_header_comment(raw, path)
     violations += check_secrets(raw, path)
     violations += check_zone_folder(path)
