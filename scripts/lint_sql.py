@@ -3,8 +3,11 @@
 
 Vérifie les bonnes pratiques attendues par l'équipe Manitowoc :
   - pas de SELECT * (hors COUNT(*))
-  - utilisation de variables de session pour l'environnement / la base cible,
-    pas de nom de base en dur (DEV_xxx / QUA_xxx / PRD_xxx)
+  - utilisation de variables de session pour l'environnement / la base cible :
+    une seule base par environnement (DEV/QUA/PRD), pas de nom de base en
+    dur (DEV/QUA/PRD utilisé tel quel ailleurs que dans la déclaration de
+    vEnv) ; les zones (BRZ/SLV/GLD) sont des schémas à l'intérieur de cette
+    base, pas des bases séparées
   - les warehouses (WAREHOUSE = ...), qui ne peuvent pas être pilotés par
     variable en DDL, doivent au moins être préfixés par un code
     d'environnement reconnu (DEV_.../QUA_.../PRD_...) pour que le
@@ -114,24 +117,46 @@ def check_env_variable(sql_no_comments: str, path: str) -> list[Violation]:
     return violations
 
 
+VENV_DECLARATION_PATTERN = re.compile(r"vEnv\s+varchar\s*:=", re.IGNORECASE)
+
+STRING_LITERAL_PATTERN = re.compile(r"'[^']*'")
+
+
+def mask_string_literals(line: str) -> str:
+    """Remplace le contenu des chaînes '...' par des espaces, pour ne pas
+    confondre du texte libre (ex. un commentaire COMMENT = '...truc DEV...')
+    avec un identifiant utilisé en dur."""
+    return STRING_LITERAL_PATTERN.sub(lambda m: " " * len(m.group(0)), line)
+
+
 def check_hardcoded_db(sql_no_comments: str, path: str) -> list[Violation]:
-    """Détecte un nom de base/schéma en dur (DEV_xxx / QUA_xxx / PRD_xxx),
-    sauf dans une clause WAREHOUSE = ... (gérée séparément : voir
-    check_warehouse_env_prefix, car on ne peut pas y mettre une variable de
-    session en DDL)."""
+    """Détecte un nom de base en dur : DEV/QUA/PRD utilisé tel quel comme
+    identifiant (une seule base par environnement ; BRZ/SLV/GLD sont des
+    schémas à l'intérieur, pas des bases séparées), sauf :
+      - sur la ligne de déclaration de vEnv elle-même (la valeur initiale
+        'DEV'/'QUA'/'PRD' y est un littéral de départ, pas un hardcode à
+        corriger : le déploiement la réécrit de toute façon) ;
+      - dans une chaîne de caractères '...' (texte libre, ex. un COMMENT),
+        qui n'est pas un identifiant ;
+      - dans une clause WAREHOUSE = ... (gérée séparément, voir
+        check_warehouse_env_prefix, car on ne peut pas y mettre une
+        variable de session en DDL)."""
     violations = []
     envs = "|".join(ALLOWED_ENVS)
-    hardcoded_pattern = re.compile(rf"\b(?:{envs})_[A-Z0-9_]+\b", re.IGNORECASE)
+    hardcoded_pattern = re.compile(rf"\b(?:{envs})\b")
     for i, line in enumerate(sql_no_comments.splitlines(), start=1):
-        warehouse_spans = [m.span(1) for m in WAREHOUSE_PATTERN.finditer(line)]
-        for m in hardcoded_pattern.finditer(line):
+        if VENV_DECLARATION_PATTERN.search(line):
+            continue
+        masked = mask_string_literals(line)
+        warehouse_spans = [m.span(1) for m in WAREHOUSE_PATTERN.finditer(masked)]
+        for m in hardcoded_pattern.finditer(masked):
             if any(start <= m.start() < end for start, end in warehouse_spans):
                 continue
             violations.append(
                 Violation(
                     path, i, "no-hardcoded-database",
-                    f"Nom de base/schéma en dur détecté ('{m.group(0)}') : "
-                    "utiliser les variables vDatabase/vEnv au lieu d'un littéral.",
+                    f"Nom de base en dur détecté ('{m.group(0)}') : "
+                    "utiliser la variable vEnv (ex. IDENTIFIER(:vEnv)) au lieu d'un littéral.",
                 )
             )
     return violations

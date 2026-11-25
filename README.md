@@ -93,8 +93,10 @@ Bloque la PR si un fichier `.sql` modifié contient :
 - un `SELECT *` (hors `COUNT(*)`)
 - pas de variable `vEnv` déclarée (l'environnement doit être piloté par
   variable, jamais codé en dur dans les `FROM`/`JOIN`)
-- un nom de base/schéma en dur du type `DEV_...`/`QUA_...`/`PRD_...`
-  ailleurs que dans la déclaration de variable
+- un nom de base en dur (`DEV`/`QUA`/`PRD` utilisé tel quel) ailleurs que
+  dans la déclaration de la variable `vEnv` — une seule base par
+  environnement, les zones (`BRZ`/`SLV`/`GLD`) sont des schémas à
+  l'intérieur, pas des bases séparées
 - un warehouse (`WAREHOUSE = ...`) dont le nom n'est pas préfixé par un
   code d'environnement reconnu (`DEV_.../QUA_.../PRD_...`) — voir section 5
 - pas d'en-tête de commentaire (Auteur / Date / Description)

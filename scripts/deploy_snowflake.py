@@ -199,9 +199,10 @@ def force_target_env(sql: str, target_env: str) -> str:
 # WAREHOUSE = <ENV>_<nom>, utilisé par ex. par les tables dynamiques
 # (WAREHOUSE = ...) et les tasks (WAREHOUSE = ...). Ces clauses attendent un
 # identifiant littéral : on ne peut pas y mettre une variable de session
-# (:vWarehouse), contrairement à vDatabase. On réécrit donc directement le
-# préfixe d'environnement, comme pour vEnv, quel que soit celui laissé dans
-# le fichier par le développeur (y compris DEV_xxx, promu vers QUA/PRD).
+# (:vWarehouse), contrairement à la base (IDENTIFIER(:vEnv)). On réécrit donc
+# directement le préfixe d'environnement, comme pour vEnv, quel que soit
+# celui laissé dans le fichier par le développeur (y compris DEV_xxx, promu
+# vers QUA/PRD).
 WAREHOUSE_PATTERN = re.compile(
     r"(\bWAREHOUSE\s*=\s*)(" + "|".join(RECOGNIZED_ENV_PREFIXES) + r")(_[A-Za-z0-9_]*)",
     re.IGNORECASE,
