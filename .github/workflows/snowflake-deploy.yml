@@ -1,0 +1,107 @@
+name: Snowflake Deploy (reusable)
+
+# Workflow APPELABLE (workflow_call) : la logique de lint + déploiement vit
+# ici, dans snowflake-admin, pas dans snowflake-git. Un petit workflow
+# "appelant", situé dans .github/workflows/ de snowflake-git, invoque celui-ci
+# à chaque PR vers qual/prod via :
+#   uses: amine-ds/snowflake-admin/.github/workflows/snowflake-deploy.yml@main
+#
+# Les Environments GitHub référencées ci-dessous (qual, prod) doivent être
+# créées DANS CE DEPOT (snowflake-admin), avec leurs secrets et, pour prod,
+# un reviewer obligatoire — voir README.md section 2.
+#
+# actions/checkout sans `repository:` explicite checkoute automatiquement le
+# dépôt ET la ref de l'appelant (snowflake-git), car un reusable workflow
+# hérite du contexte `github.*` de l'événement qui a déclenché le run côté
+# appelant. C'est ce qui permet au job de lire les fichiers sql/ de
+# snowflake-git tout en exécutant les scripts de snowflake-admin (checkoutés
+# séparément dans le dossier _admin/).
+
+on:
+  workflow_call:
+    inputs:
+      target_env:
+        description: "Code d'environnement Snowflake cible : QUA ou PRD"
+        required: true
+        type: string
+      environment_name:
+        description: "Nom de l'Environment GitHub à utiliser (qual ou prod)"
+        required: true
+        type: string
+
+jobs:
+  lint:
+    name: Lint SQL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code SQL (repo appelant)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout des scripts de pipeline (snowflake-admin)
+        uses: actions/checkout@v4
+        with:
+          repository: amine-ds/snowflake-admin
+          ref: main
+          path: _admin
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lister les fichiers SQL modifiés
+        id: changed
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'sql/**/*.sql' | tr '\n' ' ')
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          echo "Fichiers modifiés : $files"
+
+      - name: Lint
+        if: steps.changed.outputs.files != ''
+        run: python _admin/scripts/lint_sql.py ${{ steps.changed.outputs.files }}
+
+  deploy:
+    name: Déploiement Snowflake (${{ inputs.target_env }})
+    needs: lint
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+    steps:
+      - name: Checkout du code SQL (repo appelant)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout des scripts de pipeline (snowflake-admin)
+        uses: actions/checkout@v4
+        with:
+          repository: amine-ds/snowflake-admin
+          ref: main
+          path: _admin
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r _admin/scripts/requirements.txt
+
+      - name: Lister les fichiers SQL modifiés
+        id: changed
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'sql/**/*.sql' | tr '\n' ' ')
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
+      - name: Déploiement sur Snowflake
+        if: steps.changed.outputs.files != ''
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          TARGET_ENV: ${{ inputs.target_env }}
+        run: python _admin/scripts/deploy_snowflake.py ${{ steps.changed.outputs.files }}
