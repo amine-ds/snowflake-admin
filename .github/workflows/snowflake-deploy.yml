@@ -1,31 +1,34 @@
 name: Snowflake Deploy (reusable)
 
-# Workflow APPELABLE (workflow_call) : la logique de lint + déploiement vit
-# ici, dans snowflake-admin, pas dans snowflake-git. Un petit workflow
-# "appelant", situé dans .github/workflows/ de snowflake-git, invoque celui-ci
-# à chaque PR vers qual/prod via :
-#   uses: amine-ds/snowflake-admin/.github/workflows/snowflake-deploy.yml@main
+# Workflow APPELABLE (workflow_call) : la logique de lint + déploiement
+# (scripts, étapes) vit ici, dans snowflake-admin. Les Environments GitHub
+# (qual, prod) et leurs secrets, en revanche, restent dans le dépôt APPELANT
+# (ex. snowflake-git) : c'est ce dépôt qui possède les données qu'il déploie
+# et les comptes qui en sont responsables, pas ce dépôt partagé. Le job
+# appelant doit donc porter lui-même `environment: <nom>` et `secrets:
+# inherit` pour transmettre les secrets de cet Environment jusqu'ici, par
+# exemple :
 #
-# Les Environments GitHub référencées ci-dessous (qual, prod) doivent être
-# créées DANS CE DEPOT (snowflake-admin), avec leurs secrets et, pour prod,
-# un reviewer obligatoire — voir README.md section 2.
+#   jobs:
+#     deploy:
+#       environment: qual
+#       uses: amine-ds/snowflake-admin/.github/workflows/snowflake-deploy.yml@main
+#       secrets: inherit
+#       with:
+#         target_env: QUA
 #
 # actions/checkout sans `repository:` explicite checkoute automatiquement le
-# dépôt ET la ref de l'appelant (snowflake-git), car un reusable workflow
-# hérite du contexte `github.*` de l'événement qui a déclenché le run côté
-# appelant. C'est ce qui permet au job de lire les fichiers sql/ de
-# snowflake-git tout en exécutant les scripts de snowflake-admin (checkoutés
-# séparément dans le dossier _admin/).
+# dépôt ET la ref de l'appelant, car un reusable workflow hérite du contexte
+# `github.*` de l'événement qui a déclenché le run côté appelant. C'est ce
+# qui permet au job de lire les fichiers sql/ du dépôt appelant tout en
+# exécutant les scripts de snowflake-admin (checkoutés séparément dans le
+# dossier _admin/).
 
 on:
   workflow_call:
     inputs:
       target_env:
         description: "Code d'environnement Snowflake cible : QUA ou PRD"
-        required: true
-        type: string
-      environment_name:
-        description: "Nom de l'Environment GitHub à utiliser (qual ou prod)"
         required: true
         type: string
 
@@ -66,7 +69,9 @@ jobs:
     name: Déploiement Snowflake (${{ inputs.target_env }})
     needs: lint
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment_name }}
+    # Pas d'`environment:` ici : il est porté par le job appelant (voir
+    # commentaire en tête de fichier), puisque c'est le dépôt appelant qui
+    # possède l'Environment et ses secrets.
     steps:
       - name: Checkout du code SQL (repo appelant)
         uses: actions/checkout@v4
