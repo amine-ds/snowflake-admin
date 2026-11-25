@@ -129,6 +129,24 @@ Chaque fichier `.sql` modifié par la PR est envoyé à Snowflake en une seule
 requête (`cur.execute`), car les scripts sont des blocs anonymes
 `DECLARE ... BEGIN ... END;` qui doivent être exécutés d'un bloc.
 
+### Le fichier reflète ce qui a été déployé (`scripts/rewrite_deployed_state.py`)
+
+Cette réécriture de `vEnv`/warehouse se fait **en mémoire**, uniquement
+pour la requête envoyée à Snowflake — le fichier dans le dépôt, lui, ne
+change jamais tout seul (il garde ce que le développeur a écrit, par
+exemple `vEnv='DEV'`, même après un déploiement prod réussi).
+
+Pour éviter la confusion ("pourquoi le fichier affiche encore `NP_` après
+un déploiement prod ?"), le workflow appelant (`snowflake-git`) exécute, en
+plus, `rewrite_deployed_state.py` juste après un déploiement réussi : ce
+script applique la même réécriture (`vEnv`, warehouse) directement sur le
+fichier sur disque, sans se connecter à Snowflake, puis le workflow
+committe et pousse ce changement sur la branche de la PR. Le fichier finit
+donc par afficher la valeur réellement déployée — mais seulement **après**
+le run, et seulement l'état du **dernier** déploiement réussi sur cette
+branche (si la même branche de ticket sert ensuite à une autre PR vers un
+autre environnement, ce nouveau déploiement réécrit par-dessus).
+
 ### Gestion des dépendances entre scripts
 
 Quand une PR modifie plusieurs fichiers `.sql` qui dépendent les uns des
